@@ -282,7 +282,7 @@ class LogParser:
         count = 0
         for idx, line in self.df_log.iterrows():
             logID = line["LineId"]
-            logmessageL = self.preprocess(line["Content"]).strip().split()
+            logmessageL = self.preprocess(line["Message"]).strip().split()
             matchCluster = self.treeSearch(rootNode, logmessageL)
 
             # Match no existing log cluster
@@ -331,10 +331,11 @@ class LogParser:
         with open(log_file, "r") as fin:
             for line in fin.readlines():
                 try:
-                    match = regex.search(line.strip())
-                    message = [match.group(header) for header in headers]
-                    log_messages.append(message)
-                    linecount += 1
+                    if line.strip():
+                        match = regex.search(line.strip())
+                        message = [match.group(header) for header in headers]
+                        log_messages.append(message)
+                        linecount += 1
                 except Exception as e:
                     print("[Warning] Skip line: " + line)
         logdf = pd.DataFrame(log_messages, columns=headers)
@@ -344,13 +345,48 @@ class LogParser:
         return logdf
 
     def generate_logformat_regex(self, logformat):
+        headers = []
+        splitters = re.split(r"(<[^<>]+>)", logformat)
+        regex = ""
+    
+        for k in range(len(splitters)):
+            if k % 2 == 0:
+                # Escape literal text
+                literal = re.escape(splitters[k])
+    
+                # Convert spaces in format to flexible whitespace
+                literal = re.sub(r"\\ +", r"\\s*", literal)
+    
+                regex += literal
+            else:
+                header = splitters[k].strip("<>")
+                headers.append(header)
+    
+                # Field-specific regex (THIS is the key)
+                if header == "Date":
+                    regex += r"(?P<Date>\d{2}/\d{2}/\d{4})"
+                elif header == "Time":
+                    regex += r"(?P<Time>\d{2}:\d{2}:\d{2}\.\d+)"
+                elif header == "Line":
+                    regex += r"(?P<Line>\d+)"
+                elif header == "Level":
+                    regex += r"(?P<Level>[A-Z]+)"
+                elif header == "Message":
+                    regex += r"(?P<Message>.+)"
+                else:
+                    # Module, File, etc.
+                    regex += rf"(?P<{header}>[^\]]+)"
+    
+        return headers, re.compile("^" + regex + "$")
+
+    def generate_logformat_regex_old(self, logformat):
         """Function to generate regular expression to split log messages"""
         headers = []
         splitters = re.split(r"(<[^<>]+>)", logformat)
         regex = ""
         for k in range(len(splitters)):
             if k % 2 == 0:
-                splitter = re.sub(" +", "\\\s+", splitters[k])
+                splitter = re.sub(" +", "\\\s*", splitters[k])
                 regex += splitter
             else:
                 header = splitters[k].strip("<").strip(">")
@@ -366,7 +402,7 @@ class LogParser:
         template_regex = re.sub(r"([^A-Za-z0-9])", r"\\\1", template_regex)
         template_regex = re.sub(r"\\ +", r"\\s+", template_regex)
         template_regex = "^" + template_regex.replace("\<\*\>", "(.*?)") + "$"
-        parameter_list = re.findall(template_regex, row["Content"])
+        parameter_list = re.findall(template_regex, row["Message"])
         parameter_list = parameter_list[0] if parameter_list else ()
         parameter_list = (
             list(parameter_list)

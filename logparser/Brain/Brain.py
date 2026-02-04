@@ -53,7 +53,8 @@ class LogParser:
 
         self.load_data()
 
-        sentences = self.df_log["Content"].tolist()
+        sentences = self.df_log["Message"].tolist()
+        self.protected_entities = self.df_log["Module"].dropna().unique().tolist() + ['UE_ID']
 
         group_len, tuple_vector, frequency_vector = self.get_frequecy_vector(
             sentences, self.rex, self.delimeter, self.logname
@@ -137,6 +138,41 @@ class LogParser:
         )
 
     def generate_logformat_regex(self, logformat):
+        headers = []
+        splitters = re.split(r"(<[^<>]+>)", logformat)
+        regex = ""
+    
+        for k in range(len(splitters)):
+            if k % 2 == 0:
+                # Escape literal text
+                literal = re.escape(splitters[k])
+    
+                # Convert spaces in format to flexible whitespace
+                literal = re.sub(r"\\ +", r"\\s*", literal)
+    
+                regex += literal
+            else:
+                header = splitters[k].strip("<>")
+                headers.append(header)
+    
+                # Field-specific regex (THIS is the key)
+                if header == "Date":
+                    regex += r"(?P<Date>\d{2}/\d{2}/\d{4})"
+                elif header == "Time":
+                    regex += r"(?P<Time>\d{2}:\d{2}:\d{2}\.\d+)"
+                elif header == "Line":
+                    regex += r"(?P<Line>\d+)"
+                elif header == "Level":
+                    regex += r"(?P<Level>[A-Z]+)"
+                elif header == "Message":
+                    regex += r"(?P<Message>.+)"
+                else:
+                    # Module, File, etc.
+                    regex += rf"(?P<{header}>[^\]]+)"
+    
+        return headers, re.compile("^" + regex + "$")
+    
+    def generate_logformat_regex_old(self, logformat):
         """Function to generate regular expression to split log messages"""
         headers = []
         splitters = re.split(r"(<[^<>]+>)", logformat)
@@ -159,10 +195,11 @@ class LogParser:
         with open(log_file, "r") as fin:
             for line in fin.readlines():
                 try:
-                    match = regex.search(line.strip())
-                    message = [match.group(header) for header in headers]
-                    log_messages.append(message)
-                    linecount += 1
+                    if line.strip():
+                        match = regex.search(line.strip())
+                        message = [match.group(header) for header in headers]
+                        log_messages.append(message)
+                        linecount += 1
                 except Exception as e:
                     pass
         logdf = pd.DataFrame(log_messages, columns=headers)
@@ -185,16 +222,16 @@ class LogParser:
         word_combinations = {}
         word_combinations_reverse = {}
         for key in group_len.keys():
-            root_set = {""}
+            root_set = {""} # comment : this paramerte is not used
             for fre in tuple_vector[key]:
                 sorted_fre_reverse = sorted(fre, key=lambda tup: tup[0], reverse=True)
-                root_set.add(sorted_fre_reverse[0])
+                root_set.add(sorted_fre_reverse[0]) # comment : this paramerte is not used
                 sorted_tuple_vector.setdefault(key, []).append(sorted_fre_reverse)
             for fc in frequency_vector[key]:
                 number = Counter(fc)
                 result = number.most_common()
                 sorted_result = sorted(result, key=lambda tup: tup[1], reverse=True)
-                sorted_fre = sorted(result, key=lambda tup: tup[0], reverse=True)
+                sorted_fre = sorted(result, key=lambda tup: tup[0], reverse=True) # comment : according to the description the reverse should be false ?
                 word_combinations.setdefault(key, []).append(sorted_result)
                 word_combinations_reverse.setdefault(key, []).append(sorted_fre)
         return sorted_tuple_vector, word_combinations, word_combinations_reverse
@@ -214,6 +251,18 @@ class LogParser:
         for s in sentences:  # using delimiters to get split words
             for rgex in filter:
                 s = re.sub(rgex, "<*>", s)
+            #for mod in self.protected_entities:
+            #    safe = mod.replace("_", "@MOD@")
+            #    s = re.sub(
+            #    rf'(?<![A-Z0-9]){re.escape(mod)}',
+            #    safe,
+            #    s)
+            for mod in self.protected_entities:
+                safe = mod.replace("_", "@MOD@")
+                s = re.sub(
+                rf'(?<![A-Z0-9]){re.escape(mod)}(?=_|$)',
+                safe,
+                s)
             for de in delimiter:
                 s = re.sub(de, "", s)
             if dataset == "HealthApp":
@@ -259,7 +308,17 @@ class LogParser:
             if dataset == "Zookeeper":
                 s = re.sub(":", ": ", s)
                 s = re.sub("=", "= ", s)
-            s = re.sub(",", ", ", s)
+            if dataset == "Cu":
+                s = re.sub("_", " ", s)
+                s = re.sub(r'(?<![0-9a-fA-F]):(?![0-9a-fA-F])', ': ', s)
+                s = re.sub(":", ": ", s)
+                s = re.sub("=", "= ", s)
+                s = re.sub("\[", "[ ", s)
+                s = re.sub("]", "] ", s)
+                s = re.sub("\(", "( ", s)
+                s = re.sub("\)", ") ", s)
+                s = re.sub(",", ", ", s)
+                s = re.sub("@MOD@", "_", s)
             s = re.sub(" +", " ", s).split(" ")
             s.insert(0, str(line_id))
             lenth = 0
