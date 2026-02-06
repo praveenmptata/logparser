@@ -282,6 +282,7 @@ class LogParser:
         count = 0
         for idx, line in self.df_log.iterrows():
             logID = line["LineId"]
+            self.protected_entities = self.df_log["Module"].dropna().unique().tolist()
             logmessageL = self.preprocess(line["Message"]).strip().split()
             matchCluster = self.treeSearch(rootNode, logmessageL)
 
@@ -322,6 +323,26 @@ class LogParser:
     def preprocess(self, line):
         for currentRex in self.rex:
             line = re.sub(currentRex, "<*>", line)
+        for mod in self.protected_entities:
+            safe = mod.replace("_", "@MOD@")
+            line = re.sub(
+                rf'(?<![A-Z0-9]){re.escape(mod)}(?=_|$)',
+                safe,
+                line)
+        line = re.sub(r'UE_ID', 'UE@MOD@ID', line)
+        line = re.sub(r'UE_CONN', 'UE@MOD@CONN', line)
+        line = re.sub(r'TRANS_ID', 'TRANS@MOD@ID', line)
+        line = re.sub("_", " ", line)
+        line = re.sub(r'(?<![0-9a-fA-F]):(?![0-9a-fA-F])', ': ', line)
+        line = re.sub(":", ": ", line)
+        line = re.sub("=", "= ", line)
+        line = re.sub("\[", "[ ", line)
+        line = re.sub("]", " ]", line)
+        line = re.sub("\(", "( ", line)
+        line = re.sub("\)", ") ", line)
+        line = re.sub(",", ", ", line)
+        line = re.sub("@MOD@", "_", line)
+        line = re.sub(":", "", line)
         return line
 
     def log_to_dataframe(self, log_file, regex, headers, logformat):
